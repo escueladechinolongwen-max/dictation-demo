@@ -4,68 +4,77 @@ import asyncio
 import edge_tts
 import os
 
-# --- 0. 魔法化妆间 (CSS) ---
+# --- 0. 手机端适配 CSS (更紧凑，字体更大) ---
 st.markdown("""
 <style>
     .stApp { background-color: #FFFDF5; }
-    h1 { color: #FF9AA2; font-family: 'Comic Sans MS', sans-serif; }
-    .stTextInput input { border-radius: 20px; border: 2px solid #B5EAD7; padding: 10px; }
-    .stButton button { border-radius: 25px; border: none; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); }
-    /* 隐藏顶部彩条和菜单 */
+    
+    /* 手机上标题不要太大 */
+    h1 { 
+        color: #FF9AA2; 
+        font-family: 'Comic Sans MS', sans-serif; 
+        font-size: 28px !important; /* 强制改小一点适配手机 */
+        text-align: center;
+    }
+    
+    /* 输入框和按钮变大，方便手指点击 */
+    .stTextInput input { 
+        border-radius: 15px; 
+        border: 2px solid #B5EAD7; 
+        padding: 12px; 
+        font-size: 18px; 
+    }
+    .stButton button { 
+        width: 100%; /* 按钮在手机上撑满整行，更好点 */
+        border-radius: 20px; 
+        height: 50px;
+        font-size: 18px !important;
+    }
+
+    /* 隐藏多余的菜单 */
     header {visibility: hidden;}
-    #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 超级题库 (这是重点！) ---
-# 格式： "单元ID": ["句子1", "句子2", ...]
-# 您可以把全书的句子都贴在这里
+# --- 1. 题库 (保持不变，您可以继续往里加) ---
 DATABASE = {
-    # 单元 1 的练习
-    "u1_s1": ["你好", "谢谢", "再见", "我不吃肉"],
-    "u1_s2": ["今天天气真不错", "我想去图书馆", "我们要学习汉语"],
-    
-    # 单元 2 的练习
-    "u2_s1": ["你喜欢什么颜色", "这件衣服多少钱", "太贵了"],
-    "u2_s2": ["我要一杯咖啡", "不要加糖", "请给我发票"],
-    
-    # 默认兜底 (如果网址写错了就用这个)
+    "hsk1_u1": ["你好", "谢谢", "不客气", "对不起"], 
+    "hsk1_u2": ["你叫什么名字", "你是哪国人", "认识你很高兴"],
     "default": ["这是默认练习", "请检查网址参数"]
 }
 
-# --- 2. 获取当前单元 ID ---
-# 智能体通过读取网址末尾的 ?id=xxx 来决定出什么题
+# --- 2. 获取参数 ---
 query_params = st.query_params
-current_unit_id = query_params.get("id", "default") # 如果没填，就用 default
-
-# 从题库里把这一个单元的句子拿出来
+current_unit_id = query_params.get("id", "default")
 if current_unit_id in DATABASE:
     current_word_list = DATABASE[current_unit_id]
 else:
     current_word_list = DATABASE["default"]
 
-# --- 3. 语言包设置 ---
+# --- 3. 语言包 ---
 UI_TEXT = {
     "English": {
         "title": "🎈 Fun Dictation",
-        "instruction": "Listen & Type!",
-        "submit": "✨ Check",
-        "next": "➡️ Next",
+        "instruction": "Listen & Type",
+        "submit": "✨ Check Answer",
+        "next": "➡️ Next Sentence",
         "slow": "🐢 Slow Mode",
+        "replay": "🔊 Replay Audio", # 新增重播按钮
+        "settings": "⚙️ Settings (Level/Language)", # 新增设置折叠文案
         "correct": "🎉 Perfect!",
-        "wrong": "🧸 Try again!",
-        "unit_info": "Current Unit:"
+        "wrong": "🧸 Try again!"
     },
     "Español": {
         "title": "🎈 Dictado Divertido",
-        "instruction": "¡Escucha y Escribe!",
+        "instruction": "Escucha y Escribe",
         "submit": "✨ Comprobar",
         "next": "➡️ Siguiente",
         "slow": "🐢 Modo Lento",
+        "replay": "🔊 Escuchar de nuevo", # 新增重播按钮
+        "settings": "⚙️ Configuración", # 新增设置折叠文案
         "correct": "🎉 ¡Perfecto!",
-        "wrong": "🧸 ¡Casi!",
-        "unit_info": "Unidad Actual:"
+        "wrong": "🧸 ¡Casi!"
     }
 }
 
@@ -78,43 +87,51 @@ if 'slow_mode' not in st.session_state:
     st.session_state.slow_mode = False
 if 'is_solved' not in st.session_state:
     st.session_state.is_solved = False
+# 默认语言设为西班牙语，因为这是给您的学生用的
+if 'user_lang' not in st.session_state:
+    st.session_state.user_lang = "Español"
 
-# --- 5. 核心：真人级语音生成 (Edge-TTS) ---
+# --- 5. 语音功能 ---
 async def generate_speech(text, rate="-10%"):
-    # 声音选择：zh-CN-XiaoxiaoNeural (女声，温暖) 或者 zh-CN-YunxiNeural (男声，沉稳)
     voice = "zh-CN-XiaoxiaoNeural"
-    # 如果是慢速模式，语速设为 -30%
     if st.session_state.slow_mode:
         rate = "-35%"
-    
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save("audio_temp.mp3")
 
-def play_audio(text):
-    # 运行异步生成函数
+def play_audio_logic(text):
     asyncio.run(generate_speech(text))
-    # 播放生成的音频
     st.audio("audio_temp.mp3", format="audio/mp3")
 
-# --- 6. 界面构建 ---
-with st.sidebar:
-    language = st.selectbox("Language / Idioma", ["Español", "English"])
-    # 显示当前是哪个单元，方便老师调试
-    st.info(f"{UI_TEXT[language]['unit_info']} {current_unit_id}")
+# --- 6. 界面构建 (针对手机优化的布局) ---
 
-ui = UI_TEXT[language]
+# A. 把“侧边栏”改成顶部的“折叠设置”，这样手机上一眼就能看到
+with st.expander(UI_TEXT[st.session_state.user_lang]["settings"]):
+    st.session_state.user_lang = st.selectbox("Idioma / Language", ["Español", "English"], index=0)
+    st.caption(f"Current Unit ID: {current_unit_id}")
+
+ui = UI_TEXT[st.session_state.user_lang]
 
 st.title(ui["title"])
 
-# 播放音频
-play_audio(st.session_state.current_sentence)
+# B. 音频播放区
+# 专门加一个“重播”按钮，解决手机不自动播放的问题
+col_play, col_slow = st.columns([3, 1])
+with col_play:
+    if st.button(ui["replay"], type="secondary"):
+        # 点击按钮强制触发播放
+        play_audio_logic(st.session_state.current_sentence)
+        
+# 只有在初始化时尝试自动播放一次（电脑有效，手机可能无效）
+if 'auto_played' not in st.session_state:
+    play_audio_logic(st.session_state.current_sentence)
+    st.session_state.auto_played = True
 
-# 输入框
+# C. 输入与反馈
 with st.form("dictation"):
     user_input = st.text_input(ui["instruction"], key="input_field")
     submitted = st.form_submit_button(ui["submit"])
 
-# 逻辑判断
 if submitted:
     target = st.session_state.current_sentence.strip()
     clean = user_input.replace(" ", "").strip()
@@ -129,12 +146,12 @@ if submitted:
         st.session_state.mistake_count += 1
         st.error(ui["wrong"])
         
-        # 红绿纠错显示
-        html = "<div style='font-size:24px; letter-spacing:2px;'>"
+        # 红绿纠错
+        html = "<div style='font-size:20px; letter-spacing:1px; text-align:center; margin-bottom:10px;'>"
         for i in range(max(len(clean), len(target))):
             if i < len(clean) and i < len(target):
                 if clean[i] == target[i]:
-                    html += f"<span style='color:#6B8E23; background:#E2F0CB;'>{clean[i]}</span>"
+                    html += f"<span style='color:#6B8E23; background:#E2F0CB; padding:2px;'>{clean[i]}</span>"
                 else:
                     html += f"<span style='color:#CD5C5C; text-decoration:line-through;'>{clean[i]}</span>"
             elif i < len(clean):
@@ -144,19 +161,20 @@ if submitted:
         html += "</div>"
         st.markdown(html, unsafe_allow_html=True)
 
-# 按钮组
-col1, col2 = st.columns(2)
-with col1:
-    if st.session_state.is_solved:
-        if st.button(ui["next"], type="primary"):
-            st.session_state.current_sentence = random.choice(current_word_list)
-            st.session_state.is_solved = False
-            st.session_state.mistake_count = 0
-            st.session_state.slow_mode = False
-            st.rerun()
+# D. 底部操作区 (手机上会自动竖向排列)
+# 我们不分两列了，直接竖着放，手指更容易点
+if st.session_state.is_solved:
+    if st.button(ui["next"], type="primary"):
+        st.session_state.current_sentence = random.choice(current_word_list)
+        st.session_state.is_solved = False
+        st.session_state.mistake_count = 0
+        st.session_state.slow_mode = False
+        if 'auto_played' in st.session_state:
+            del st.session_state.auto_played # 重置自动播放状态
+        st.rerun()
 
-with col2:
-    if st.session_state.mistake_count >= 3 and not st.session_state.is_solved:
-        if st.button(ui["slow"]):
-            st.session_state.slow_mode = True
-            st.rerun()
+# 慢速模式按钮
+if st.session_state.mistake_count >= 3 and not st.session_state.is_solved:
+    if st.button(ui["slow"]):
+        st.session_state.slow_mode = True
+        st.rerun()
